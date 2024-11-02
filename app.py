@@ -90,15 +90,21 @@ def recibir_datos():
     db.session.commit()
     return jsonify({"status": "success", "message": "Datos recibidos y almacenados"}), 200
 
-# Endpoint para análisis de rendimiento post-carrera
+# Endpoint para análisis de rendimiento post-carrera filtrado por device_id
 @app.route('/api/v1/analizar_rendimiento_post_carrera', methods=['POST'])
 def analizar_rendimiento_post_carrera():
+    device_id = request.json.get("device_id")
+    if not device_id:
+        return jsonify({"status": "error", "message": "Se requiere device_id"}), 400
+
     # Cargar el modelo y el escalador
     modelo_rendimiento = joblib.load('modelo_rendimiento.pkl')
     scaler = joblib.load('scaler.pkl')
 
-    # Obtener todos los datos de la carrera
-    datos_carrera = SensorData.query.order_by(SensorData.timestamp.asc()).all()
+    # Obtener datos del dispositivo específico
+    datos_carrera = SensorData.query.filter_by(device_id=device_id).order_by(SensorData.timestamp.asc()).all()
+    if not datos_carrera:
+        return jsonify({"status": "error", "message": "No hay datos para el dispositivo"}), 404
 
     # Organizar los datos en el formato necesario para el modelo
     X_carrera = np.array([
@@ -115,12 +121,18 @@ def analizar_rendimiento_post_carrera():
     # Devolver el puntaje de rendimiento global y detallado
     return jsonify({"status": "success", "puntaje_rendimiento": puntaje_total, "puntajes_detallados": puntajes.tolist()}), 200
 
-# Endpoint para obtener datos históricos de la carrera para graficar en Flutter
+# Endpoint para obtener datos históricos filtrados por device_id
 @app.route('/api/v1/datos_historicos', methods=['GET'])
 def datos_historicos():
-    # Obtener todos los registros de la carrera más reciente
-    datos_carrera = SensorData.query.order_by(SensorData.timestamp.asc()).all()
-    
+    device_id = request.args.get("device_id")
+    if not device_id:
+        return jsonify({"status": "error", "message": "Se requiere device_id"}), 400
+
+    # Obtener registros del dispositivo específico
+    datos_carrera = SensorData.query.filter_by(device_id=device_id).order_by(SensorData.timestamp.asc()).all()
+    if not datos_carrera:
+        return jsonify({"status": "error", "message": "No hay datos para el dispositivo"}), 404
+
     # Organizar datos en listas para cada sensor
     datos = {
         "timestamps": [dato.timestamp.isoformat() for dato in datos_carrera],
