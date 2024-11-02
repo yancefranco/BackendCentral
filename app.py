@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 import joblib
 import os
@@ -33,30 +34,34 @@ class SensorData(db.Model):
 with app.app_context():
     db.create_all()
 
-# Entrenamiento y almacenamiento del modelo de IA para analizar el rendimiento post-carrera
+# Función para entrenar el modelo de rendimiento y escalar los datos
 def entrenar_modelo_rendimiento():
-    # Datos simulados de entrenamiento: [velocidad, temperatura, presión, combustible]
+    # Datos de entrenamiento simulados: [velocidad, temperatura, presión, combustible]
     X = np.array([
         [150, 90, 32, 60],
         [160, 92, 33, 58],
         [155, 89, 31, 55],
         [165, 95, 30, 50],
         [170, 100, 35, 40]
-        # Más datos históricos para mejorar el modelo...
     ])
     
-    # Puntuación de rendimiento simulada para cada conjunto de datos
-    y = np.array([80, 85, 78, 90, 70])  # Ejemplo de puntuación de rendimiento
+    # Puntuación de rendimiento simulada
+    y = np.array([80, 85, 78, 90, 70])
 
-    # Crear y entrenar el modelo de regresión
+    # Escalar los datos
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Entrenar el modelo de regresión lineal
     modelo_rendimiento = LinearRegression()
-    modelo_rendimiento.fit(X, y)
+    modelo_rendimiento.fit(X_scaled, y)
 
-    # Guardar el modelo entrenado en un archivo
+    # Guardar el modelo y el escalador en archivos
     joblib.dump(modelo_rendimiento, 'modelo_rendimiento.pkl')
+    joblib.dump(scaler, 'scaler.pkl')
 
-# Entrenar el modelo solo si el archivo no existe
-if not os.path.exists('modelo_rendimiento.pkl'):
+# Entrenar el modelo si no está ya guardado
+if not os.path.exists('modelo_rendimiento.pkl') or not os.path.exists('scaler.pkl'):
     entrenar_modelo_rendimiento()
 
 # Endpoint para recibir datos desde el edge
@@ -88,10 +93,11 @@ def recibir_datos():
 # Endpoint para análisis de rendimiento post-carrera
 @app.route('/api/v1/analizar_rendimiento_post_carrera', methods=['POST'])
 def analizar_rendimiento_post_carrera():
-    # Cargar el modelo de IA
+    # Cargar el modelo y el escalador
     modelo_rendimiento = joblib.load('modelo_rendimiento.pkl')
+    scaler = joblib.load('scaler.pkl')
 
-    # Obtener todos los datos de la carrera más reciente
+    # Obtener todos los datos de la carrera
     datos_carrera = SensorData.query.order_by(SensorData.timestamp.asc()).all()
 
     # Organizar los datos en el formato necesario para el modelo
@@ -99,8 +105,9 @@ def analizar_rendimiento_post_carrera():
         [dato.velocidad, dato.temperatura, dato.presion, dato.combustible] for dato in datos_carrera
     ])
 
-    # Calcular el puntaje de rendimiento para cada punto de la carrera
-    puntajes = modelo_rendimiento.predict(X_carrera)
+    # Escalar los datos antes de predecir
+    X_carrera_scaled = scaler.transform(X_carrera)
+    puntajes = modelo_rendimiento.predict(X_carrera_scaled)
     
     # Calcular el puntaje promedio de rendimiento de la carrera
     puntaje_total = np.mean(puntajes)
