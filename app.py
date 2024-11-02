@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 import numpy as np
@@ -16,10 +17,11 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Inicializar la base de datos
 db = SQLAlchemy(app)
 
-# Modelo de base de datos para los datos de sensores
-class SensorData(db.Model):
-    __tablename__ = 'sensores'
-    device_id = db.Column(db.String(50), primary_key=True)  # ID único del dispositivo
+# Tabla para los datos históricos de los sensores
+class HistoricoSensores(db.Model):
+    __tablename__ = 'historico_sensores'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    device_id = db.Column(db.String(50), nullable=False)
     velocidad = db.Column(db.Integer, nullable=False)
     temperatura = db.Column(db.Integer, nullable=False)
     presion = db.Column(db.Integer, nullable=False)
@@ -27,7 +29,21 @@ class SensorData(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
     def __repr__(self):
-        return f"<SensorData {self.device_id}>"
+        return f"<HistoricoSensores {self.device_id}>"
+
+# Tabla para los datos de rendimiento post-carrera
+class RendimientoSensores(db.Model):
+    __tablename__ = 'rendimiento_sensores'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    device_id = db.Column(db.String(50), nullable=False)
+    velocidad = db.Column(db.Integer, nullable=False)
+    temperatura = db.Column(db.Integer, nullable=False)
+    presion = db.Column(db.Integer, nullable=False)
+    combustible = db.Column(db.Integer, nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<RendimientoSensores {self.device_id}>"
 
 # Crear las tablas en la base de datos
 with app.app_context():
@@ -63,7 +79,7 @@ def entrenar_modelo_rendimiento():
 if not os.path.exists('modelo_rendimiento.pkl') or not os.path.exists('scaler.pkl'):
     entrenar_modelo_rendimiento()
 
-# Endpoint para recibir datos desde el edge, actualizando si ya existen para el dispositivo
+# Endpoint para recibir datos y guardarlos en ambas tablas
 @app.route('/api/v1/recibir_datos', methods=['POST'])
 def recibir_datos():
     data = request.json
@@ -77,30 +93,29 @@ def recibir_datos():
     presion = data.get("presion")
     combustible = data.get("combustible")
 
-    # Verificar si ya existe un registro para este dispositivo
-    sensor_data = SensorData.query.filter_by(device_id=device_id).first()
+    # Guardar en la tabla de datos históricos
+    historico = HistoricoSensores(
+        device_id=device_id,
+        velocidad=velocidad,
+        temperatura=temperatura,
+        presion=presion,
+        combustible=combustible
+    )
+    db.session.add(historico)
 
-    if sensor_data:
-        # Actualizar los valores si el dispositivo ya existe
-        sensor_data.velocidad = velocidad
-        sensor_data.temperatura = temperatura
-        sensor_data.presion = presion
-        sensor_data.combustible = combustible
-        sensor_data.timestamp = datetime.utcnow()
-    else:
-        # Crear un nuevo registro si el dispositivo no existe
-        sensor_data = SensorData(
-            device_id=device_id,
-            velocidad=velocidad,
-            temperatura=temperatura,
-            presion=presion,
-            combustible=combustible
-        )
-        db.session.add(sensor_data)
+    # Guardar en la tabla de rendimiento
+    rendimiento = RendimientoSensores(
+        device_id=device_id,
+        velocidad=velocidad,
+        temperatura=temperatura,
+        presion=presion,
+        combustible=combustible
+    )
+    db.session.add(rendimiento)
 
     # Guardar los cambios en la base de datos
     db.session.commit()
-    return jsonify({"status": "success", "message": "Datos recibidos y actualizados o creados"}), 200
+    return jsonify({"status": "success", "message": "Datos recibidos y almacenados en ambas tablas"}), 200
 
 # Endpoint para análisis de rendimiento post-carrera filtrado por device_id
 @app.route('/api/v1/analizar_rendimiento_post_carrera', methods=['POST'])
@@ -113,8 +128,8 @@ def analizar_rendimiento_post_carrera():
     modelo_rendimiento = joblib.load('modelo_rendimiento.pkl')
     scaler = joblib.load('scaler.pkl')
 
-    # Obtener datos del dispositivo específico
-    datos_carrera = SensorData.query.filter_by(device_id=device_id).order_by(SensorData.timestamp.asc()).all()
+    # Obtener datos del dispositivo específico de la tabla de rendimiento
+    datos_carrera = RendimientoSensores.query.filter_by(device_id=device_id).order_by(RendimientoSensores.timestamp.asc()).all()
     if not datos_carrera:
         return jsonify({"status": "error", "message": "No hay datos para el dispositivo"}), 404
 
@@ -140,8 +155,8 @@ def datos_historicos():
     if not device_id:
         return jsonify({"status": "error", "message": "Se requiere device_id"}), 400
 
-    # Obtener registros del dispositivo específico
-    datos_carrera = SensorData.query.filter_by(device_id=device_id).order_by(SensorData.timestamp.asc()).all()
+    # Obtener registros del dispositivo específico de la tabla de datos históricos
+    datos_carrera = HistoricoSensores.query.filter_by(device_id=device_id).order_by(HistoricoSensores.timestamp.asc()).all()
     if not datos_carrera:
         return jsonify({"status": "error", "message": "No hay datos para el dispositivo"}), 404
 
@@ -156,6 +171,23 @@ def datos_historicos():
 
     return jsonify(datos), 200
 
+# Función para eliminar registros antiguos
+def limpiar_datos_antiguos():
+    limite = datetime.utcnow() - timedelta(days=1)
+    HistoricoSensores.query.filter(HistoricoSensores.timestamp < limite).delete()
+    RendimientoSensores.query.filter(RendimientoSensores.timestamp < limite).delete()
+    db.session.commit()
+    print("Registros antiguos eliminados")
+
+# Configuración de un trabajo programado para ejecutar cada 24 horas
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=limpiar_datos_antiguos, trigger="interval", hours=24)
+scheduler.start()
+
+# Cerrar el scheduler al terminar la aplicación
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    scheduler.shutdown()
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
