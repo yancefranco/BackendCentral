@@ -19,8 +19,7 @@ db = SQLAlchemy(app)
 # Modelo de base de datos para los datos de sensores
 class SensorData(db.Model):
     __tablename__ = 'sensores'
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    device_id = db.Column(db.String(50), nullable=False)
+    device_id = db.Column(db.String(50), primary_key=True)  # ID único del dispositivo
     velocidad = db.Column(db.Integer, nullable=False)
     temperatura = db.Column(db.Integer, nullable=False)
     presion = db.Column(db.Integer, nullable=False)
@@ -64,7 +63,7 @@ def entrenar_modelo_rendimiento():
 if not os.path.exists('modelo_rendimiento.pkl') or not os.path.exists('scaler.pkl'):
     entrenar_modelo_rendimiento()
 
-# Endpoint para recibir datos desde el edge
+# Endpoint para recibir datos desde el edge, actualizando si ya existen para el dispositivo
 @app.route('/api/v1/recibir_datos', methods=['POST'])
 def recibir_datos():
     data = request.json
@@ -78,17 +77,30 @@ def recibir_datos():
     presion = data.get("presion")
     combustible = data.get("combustible")
 
-    # Crear y guardar registro de sensor en la base de datos
-    sensor_data = SensorData(
-        device_id=device_id,
-        velocidad=velocidad,
-        temperatura=temperatura,
-        presion=presion,
-        combustible=combustible
-    )
-    db.session.add(sensor_data)
+    # Verificar si ya existe un registro para este dispositivo
+    sensor_data = SensorData.query.filter_by(device_id=device_id).first()
+
+    if sensor_data:
+        # Actualizar los valores si el dispositivo ya existe
+        sensor_data.velocidad = velocidad
+        sensor_data.temperatura = temperatura
+        sensor_data.presion = presion
+        sensor_data.combustible = combustible
+        sensor_data.timestamp = datetime.utcnow()
+    else:
+        # Crear un nuevo registro si el dispositivo no existe
+        sensor_data = SensorData(
+            device_id=device_id,
+            velocidad=velocidad,
+            temperatura=temperatura,
+            presion=presion,
+            combustible=combustible
+        )
+        db.session.add(sensor_data)
+
+    # Guardar los cambios en la base de datos
     db.session.commit()
-    return jsonify({"status": "success", "message": "Datos recibidos y almacenados"}), 200
+    return jsonify({"status": "success", "message": "Datos recibidos y actualizados o creados"}), 200
 
 # Endpoint para análisis de rendimiento post-carrera filtrado por device_id
 @app.route('/api/v1/analizar_rendimiento_post_carrera', methods=['POST'])
@@ -146,3 +158,4 @@ def datos_historicos():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
