@@ -83,6 +83,36 @@ def init_db():
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+             # Tabla intermedia usuario_dispositivos
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS usuario_dispositivos (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    usuario_id INT NOT NULL,
+                    device_id VARCHAR(50) NOT NULL,
+                    FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+                    FOREIGN KEY (device_id) REFERENCES iot_devices(device_id),
+                    UNIQUE (usuario_id, device_id) -- Evita duplicados
+                )
+            ''')
+            # Tabla membresias
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS membresias (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+        usuario_id INT NOT NULL,
+        tipo ENUM('premium') NOT NULL DEFAULT 'premium',
+        numero_tarjeta VARCHAR(16) NOT NULL,
+        fecha_vencimiento DATE NOT NULL,
+        cvv VARCHAR(3) NOT NULL,
+        nombre_titular VARCHAR(255) NOT NULL,
+        fecha_inicio DATETIME DEFAULT CURRENT_TIMESTAMP,
+        fecha_fin DATETIME NOT NULL,
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+        UNIQUE (usuario_id)
+                )
+            ''')
+            
+
             conn.commit()
             print("Tablas creadas o ya existentes.")
         except Error as e:
@@ -117,6 +147,108 @@ def entrenar_modelo_rendimiento():
 if not os.path.exists('modelo_rendimiento.pkl') or not os.path.exists('scaler.pkl'):
     entrenar_modelo_rendimiento()
 
+
+@app.route('/api/v1/crear_membresia', methods=['POST'])
+def crear_membresia():
+    from datetime import datetime, timedelta
+    data = request.json
+    usuario_id = data.get("usuario_id")
+    tipo = data.get("tipo", "premium")  # Valor por defecto: 'premium'
+    numero_tarjeta = data.get("numero_tarjeta")
+    fecha_vencimiento = data.get("fecha_vencimiento")  # Formato: MM/YY
+    cvv = data.get("cvv")
+    nombre_titular = data.get("nombre_titular")  # Nombre del dueño de la tarjeta
+
+    # Validar datos requeridos
+    if not (usuario_id and tipo and numero_tarjeta and fecha_vencimiento and cvv and nombre_titular):
+        return jsonify({"error": "Datos incompletos"}), 400
+
+    # Validar tipo de membresía (solo 'premium')
+    if tipo != 'premium':
+        return jsonify({"error": "Tipo de membresía no válido"}), 400
+
+    # Validar formato de tarjeta y CVV
+    if not (len(numero_tarjeta) == 16 and numero_tarjeta.isdigit()):
+        return jsonify({"error": "Número de tarjeta no válido"}), 400
+    if not (len(cvv) == 3 and cvv.isdigit()):
+        return jsonify({"error": "CVV no válido"}), 400
+
+    # Validar fecha de vencimiento en formato MM/YY
+    try:
+        mes, año = map(int, fecha_vencimiento.split("/"))
+        fecha_vencimiento_obj = datetime(year=2000 + año, month=mes, day=1)
+        if fecha_vencimiento_obj < datetime.now():
+            return jsonify({"error": "La tarjeta está vencida"}), 400
+    except (ValueError, IndexError):
+        return jsonify({"error": "Formato de fecha de vencimiento no válido. Use MM/YY"}), 400
+
+    # Validar nombre del titular
+    if not isinstance(nombre_titular, str) or len(nombre_titular.strip()) == 0:
+        return jsonify({"error": "El nombre del titular de la tarjeta es inválido"}), 400
+
+    # Calcular fechas de suscripción
+    fecha_inicio = datetime.now()
+    fecha_fin = fecha_inicio + timedelta(days=30)  # Suscripción de 1 mes
+
+    # Insertar membresía en la base de datos
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO membresias (usuario_id, tipo, numero_tarjeta, fecha_vencimiento, cvv, nombre_titular, fecha_inicio, fecha_fin)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (usuario_id, tipo, numero_tarjeta, fecha_vencimiento_obj.date(), cvv, nombre_titular, fecha_inicio, fecha_fin))
+            conn.commit()
+            return jsonify({
+                "message": "Membresía premium creada exitosamente",
+                "fecha_inicio": fecha_inicio,
+                "fecha_fin": fecha_fin
+            }), 201
+        except mysql.connector.IntegrityError:
+            return jsonify({"error": "El usuario ya tiene una membresía activa"}), 400
+        except Error as e:
+            print(f"Error al crear membresía: {e}")
+            return jsonify({"error": "Error al crear la membresía"}), 500
+        finally:
+            cursor.close()
+            conn.close()
+    else:
+        return jsonify({"error": "Error de conexión con la base de datos"}), 500
+    
+@app.route('/api/v1/verificar_membresia/<int:usuario_id>', methods=['GET'])
+def verificar_membresia(usuario_id):
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # Consultar si el usuario tiene una membresía activa
+            cursor.execute("""
+                SELECT tipo, fecha_inicio, fecha_fin, nombre_titular
+                FROM membresias
+                WHERE usuario_id = %s AND fecha_fin > NOW()
+            """, (usuario_id,))
+            membresia = cursor.fetchone()
+
+            if membresia:
+                return jsonify({
+                    "message": "El usuario tiene una membresía activa",
+                    "membresia": membresia
+                }), 200
+            else:
+                return jsonify({
+                    "message": "El usuario no tiene una membresía activa"
+                }), 404
+        except Error as e:
+            print(f"Error al verificar membresía: {e}")
+            return jsonify({"error": "Error al verificar la membresía"}), 500
+        finally:
+            cursor.close()
+            conn.close()
+    else:
+        return jsonify({"error": "Error de conexión con la base de datos"}), 500
+
+
 # Ruta para registrar un usuario
 @app.route('/registrarte', methods=['POST'])
 def registrarte():
@@ -149,6 +281,7 @@ def registrarte():
             conn.close()
     else:
         return jsonify({"error": "Error de conexión con la base de datos"}), 500
+
 
 # Ruta para iniciar sesión
 @app.route('/iniciar_sesion', methods=['POST'])
@@ -193,7 +326,62 @@ def perfil(usuario):
             return jsonify({"error": "Usuario no encontrado"}), 404
     else:
         return jsonify({"error": "Error de conexión con la base de datos"}), 500
-    
+
+# Endpoint para asociar un dispositivo a un usuario
+@app.route('/api/v1/asociar_dispositivo', methods=['POST'])
+def asociar_dispositivo():
+    data = request.json
+    usuario_id = data.get("usuario_id")
+    device_id = data.get("device_id")
+
+    if not usuario_id or not device_id:
+        return jsonify({"error": "Datos incompletos"}), 400
+
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO usuario_dispositivos (usuario_id, device_id)
+                VALUES (%s, %s)
+            """, (usuario_id, device_id))
+            conn.commit()
+            return jsonify({"message": "Dispositivo asociado exitosamente"}), 201
+        except mysql.connector.IntegrityError:
+            return jsonify({"error": "El dispositivo ya está asociado al usuario"}), 400
+        except Error as e:
+            print(f"Error al asociar dispositivo: {e}")
+            return jsonify({"error": "Error al asociar el dispositivo"}), 500
+        finally:
+            cursor.close()
+            conn.close()
+    else:
+        return jsonify({"error": "Error de conexión con la base de datos"}), 500
+
+# Endpoint para obtener dispositivos asociados a un usuario
+@app.route('/api/v1/usuario/<int:usuario_id>/dispositivos', methods=['GET'])
+def obtener_dispositivos_usuario(usuario_id):
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute("""
+                SELECT d.device_id, d.velocidad, d.temperatura, d.presion, d.combustible, d.timestamp
+                FROM iot_devices d
+                INNER JOIN usuario_dispositivos ud ON d.device_id = ud.device_id
+                WHERE ud.usuario_id = %s
+            """, (usuario_id,))
+            dispositivos = cursor.fetchall()
+            return jsonify({"status": "success", "dispositivos": dispositivos}), 200
+        except Error as e:
+            print(f"Error al obtener dispositivos: {e}")
+            return jsonify({"error": "Error al obtener dispositivos"}), 500
+        finally:
+            cursor.close()
+            conn.close()
+    else:
+        return jsonify({"error": "Error de conexión con la base de datos"}), 500
+   
 
 @app.route('/api/v1/recibir_datos', methods=['POST'])
 def recibir_datos():
