@@ -126,26 +126,8 @@ def recibir_datos():
     )
     db.session.add(rendimiento)
 
-    # Guardar los cambios en la base de datos
-    db.session.commit()
-    return jsonify({"status": "success", "message": "Datos recibidos y almacenados en ambas tablas"}), 200
-
-@app.route('/api/v1/actualizar_dispositivo', methods=['POST'])
-def actualizar_dispositivo():
-    data = request.json
-    if not data or "device_id" not in data:
-        return jsonify({"status": "error", "message": "Datos inválidos o faltantes"}), 400
-
-    # Extraer los datos
-    device_id = data.get("device_id")
-    velocidad = data.get("velocidad")
-    temperatura = data.get("temperatura")
-    presion = data.get("presion")
-    combustible = data.get("combustible")
-
-    # Buscar si el dispositivo ya existe
+    # Actualizar o insertar en la tabla de dispositivos IoT
     dispositivo = IoTDevice.query.get(device_id)
-
     if dispositivo:
         # Actualizar los datos del dispositivo existente
         dispositivo.velocidad = velocidad
@@ -164,8 +146,11 @@ def actualizar_dispositivo():
         )
         db.session.add(dispositivo)
 
+    # Guardar los cambios en la base de datos
     db.session.commit()
-    return jsonify({"status": "success", "message": "Dispositivo actualizado correctamente", "device_id": device_id}), 200
+    return jsonify({"status": "success", "message": "Datos recibidos y almacenados correctamente"}), 200
+
+
 
 @app.route('/api/v1/dispositivos', methods=['GET'])
 def obtener_dispositivos():
@@ -259,5 +244,4 @@ def shutdown_session(exception=None):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
 
