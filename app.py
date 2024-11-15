@@ -249,11 +249,15 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(func=limpiar_datos_antiguos, trigger="interval", hours=24)
 scheduler.start()
 
-# Cerrar el scheduler al terminar la aplicación
 @app.teardown_appcontext
 def shutdown_session(exception=None):
-    scheduler.shutdown()
+    try:
+        scheduler.shutdown()
+    except Exception as e:
+        print(f"Error al intentar cerrar el scheduler: {e}")
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
