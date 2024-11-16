@@ -504,6 +504,7 @@ def datos_historicos():
 
     return jsonify({"status": "success", "data": datos_carrera}), 200
 
+# Scheduler para limpiar datos antiguos
 def limpiar_datos_antiguos():
     limite = datetime.utcnow() - timedelta(days=1)
     conn = get_db_connection()
@@ -513,25 +514,33 @@ def limpiar_datos_antiguos():
             cursor.execute("DELETE FROM historico_sensores WHERE timestamp < %s", (limite,))
             cursor.execute("DELETE FROM rendimiento_sensores WHERE timestamp < %s", (limite,))
             conn.commit()
+            print("Datos antiguos eliminados correctamente.")
         except Error as e:
-            print(f"Error al ejecutar la consulta: {e}")
+            print(f"Error al eliminar datos antiguos: {e}")
         finally:
             cursor.close()
             conn.close()
-    print("Registros antiguos eliminados")
+    else:
+        print("Error al conectar con la base de datos para eliminar datos antiguos.")
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(func=limpiar_datos_antiguos, trigger="interval", hours=24)
-scheduler.start()
+try:
+    scheduler.add_job(func=limpiar_datos_antiguos, trigger="interval", hours=24)
+    scheduler.start()
+    print("Scheduler iniciado correctamente.")
+except Exception as e:
+    print(f"Error al iniciar el scheduler: {e}")
 
 @app.teardown_appcontext
 def shutdown_session(exception=None):
     try:
-        scheduler.shutdown()
+        if scheduler.running:
+            scheduler.shutdown()
+            print("Scheduler detenido correctamente.")
+        else:
+            print("Scheduler ya estaba detenido.")
     except Exception as e:
         print(f"Error al intentar cerrar el scheduler: {e}")
-
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
