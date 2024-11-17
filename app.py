@@ -216,13 +216,18 @@ def crear_membresia():
     else:
         return jsonify({"error": "Error de conexión con la base de datos"}), 500
     
+import logging
+
+logging.basicConfig(filename='app.log', filemode='a', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 @app.route('/api/v1/verificar_membresia/<int:usuario_id>', methods=['GET'])
 def verificar_membresia(usuario_id):
+    logging.info(f'Inicio de verificación de membresía para el usuario {usuario_id}')
     conn = get_db_connection()
     if conn:
         cursor = conn.cursor(dictionary=True)
         try:
-            # Consultar si el usuario tiene una membresía activa
+            logging.info('Consulta a la base de datos para verificar membresía')
             cursor.execute("""
                 SELECT tipo, fecha_inicio, fecha_fin, nombre_titular
                 FROM membresias
@@ -231,24 +236,25 @@ def verificar_membresia(usuario_id):
             membresia = cursor.fetchone()
 
             if membresia:
+                logging.info('Membresía activa encontrada')
                 return jsonify({
                     "message": "El usuario tiene una membresía activa",
                     "membresia": membresia
                 }), 200
             else:
+                logging.info('No se encontró membresía activa')
                 return jsonify({
                     "message": "El usuario no tiene una membresía activa"
                 }), 404
         except Error as e:
-            print(f"Error al verificar membresía: {e}")
+            logging.error(f'Error al verificar membresía: {e}')
             return jsonify({"error": "Error al verificar la membresía"}), 500
         finally:
             cursor.close()
             conn.close()
     else:
+        logging.error('Error de conexión con la base de datos')
         return jsonify({"error": "Error de conexión con la base de datos"}), 500
-
-
 # Ruta para registrar un usuario
 @app.route('/registrarte', methods=['POST'])
 def registrarte():
@@ -310,27 +316,34 @@ def iniciar_sesion():
     else:
         return jsonify({"error": "Error de conexión con la base de datos"}), 500
 
-# Ruta para obtener el perfil del usuario
-@app.route('/perfil/<usuario>', methods=['GET'])
-def perfil(usuario):
+# Ruta para obtener el perfil del usuario utilizando el ID
+@app.route('/perfil/<int:id>', methods=['GET'])
+def perfil(id):
     conn = get_db_connection()
     if conn:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute('''
-            SELECT id, usuario, nombres, apellidos, correo, rol 
-            FROM usuarios 
-            WHERE usuario = %s
-        ''', (usuario,))
-        user = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        try:
+            # Consulta al usuario por su ID
+            cursor.execute('''
+                SELECT id, usuario, nombres, apellidos, correo, rol 
+                FROM usuarios 
+                WHERE id = %s
+            ''', (id,))
+            user = cursor.fetchone()
 
-        if user:
-            return jsonify(user), 200
-        else:
-            return jsonify({"error": "Usuario no encontrado"}), 404
+            if user:
+                return jsonify(user), 200
+            else:
+                return jsonify({"error": "Usuario no encontrado"}), 404
+        except Error as e:
+            print(f"Error al ejecutar la consulta: {e}")
+            return jsonify({"error": "Error al obtener el perfil del usuario"}), 500
+        finally:
+            cursor.close()
+            conn.close()
     else:
         return jsonify({"error": "Error de conexión con la base de datos"}), 500
+
 
 # Endpoint para asociar un dispositivo a un usuario
 @app.route('/api/v1/asociar_dispositivo', methods=['POST'])
