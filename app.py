@@ -283,6 +283,7 @@ def registrarte():
         return jsonify({"error": "Error de conexión con la base de datos"}), 500
 
 
+
 # Ruta para iniciar sesión
 @app.route('/iniciar_sesion', methods=['POST'])
 def iniciar_sesion():
@@ -299,7 +300,11 @@ def iniciar_sesion():
         conn.close()
 
         if user and check_password_hash(user['contraseña'], contraseña):
-            return jsonify({"mensaje": "Inicio de sesión exitoso", "rol": user['rol']}), 200
+            return jsonify({
+                "mensaje": "Inicio de sesión exitoso",
+                "rol": user['rol'],
+                "usuarioId": user['id']  # Asegúrate de que 'id' es el nombre correcto del campo en tu base de datos
+            }), 200
         else:
             return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
     else:
